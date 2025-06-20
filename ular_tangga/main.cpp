@@ -8,6 +8,98 @@
 using namespace std;
 #include <stdlib.h>
 #include <time.h>
+#include <cmath>
+
+
+int viewMode = 1; // 1 = ortho, 2 = animasi observer, 3 = first-person
+float observerAngleX = 0, observerAngleY = 0, observerAngleZ = 0;
+float lastAngleX = 0, lastAngleY = 0, lastAngleZ = 0;
+bool animating = false;
+bool mouseLeft = false, mouseMiddle = false, mouseRight = false;
+
+bool lightAmbientOn = true, lightDiffuseOn = true, lightSpecularOn = true;
+
+float cameraX = 0, cameraY = 1, cameraZ = 0; // posisi awal observer
+float cameraYaw = 0; // menghadap ke kanan (sumbu X positif)
+float cameraSpeed = 0.2;
+
+// Fungsi utility normal vektor (untuk manual shading)
+void setNormal(float x, float y, float z) {
+    float len = sqrt(x*x + y*y + z*z);
+    glNormal3f(x/len, y/len, z/len);
+}
+
+// Shading setup
+void setupLights() {
+    GLfloat ambient[]  = {0.3, 0.3, 0.3, 1.0};
+    GLfloat diffuse[]  = {1.0, 1.0, 1.0, 1.0};
+    GLfloat specular[] = {1.0, 1.0, 1.0, 1.0};
+    GLfloat pos[]      = {5.0, 8.0, 5.0, 1.0};
+
+    if (lightAmbientOn)  glLightfv(GL_LIGHT0, GL_AMBIENT,  ambient);
+    else {
+        GLfloat off[] = {0,0,0,1};
+        glLightfv(GL_LIGHT0, GL_AMBIENT, off);
+    }
+
+    if (lightDiffuseOn)  glLightfv(GL_LIGHT0, GL_DIFFUSE,  diffuse);
+    else {
+        GLfloat off[] = {0,0,0,1};
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, off);
+    }
+
+    if (lightSpecularOn) glLightfv(GL_LIGHT0, GL_SPECULAR, specular);
+    else {
+        GLfloat off[] = {0,0,0,1};
+        glLightfv(GL_LIGHT0, GL_SPECULAR, off);
+    }
+    glLightfv(GL_LIGHT0, GL_POSITION, pos);
+    glEnable(GL_LIGHT0);
+    glEnable(GL_NORMALIZE);
+}
+
+// Contoh bidang dengan normal manual (balok miring)
+void drawSlantedBlock() {
+    glPushMatrix();
+    glTranslatef(2, 0, 2);
+    glRotatef(30, 0, 0, 1); // Rotasi supaya tidak sejajar sumbu
+    glBegin(GL_QUADS);
+    // Hitung normal manual untuk tiap bidang!
+    // Bidang bawah (menghadap -Y)
+    setNormal(0, -1, 0);
+    glVertex3f(-1, 0, -1); glVertex3f(1, 0, -1); glVertex3f(1, 0, 1); glVertex3f(-1, 0, 1);
+
+    // Bidang atas (menghadap +Y)
+    setNormal(0, 1, 0);
+    glVertex3f(-1, 2, -1); glVertex3f(1, 2, -1); glVertex3f(1, 2, 1); glVertex3f(-1, 2, 1);
+
+    // Sisi lain... (hitung normal manual untuk setiap bidang)
+    // ...
+    glEnd();
+    glPopMatrix();
+}
+
+void drawAlignedBlock() {
+    glPushMatrix();
+    GLfloat mat[] = {1, 0, 0, 1};
+    glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, mat);
+    glutSolidCube(1);
+    glPopMatrix();
+}
+
+void drawNRP(bool mode3) {
+    glPushMatrix();
+    if (mode3) glRotatef(90, 1, 0, 0);
+    // gambar NRP (e.g., glutSolidCube)
+    glPopMatrix();
+}
+void drawPlayer(bool mode3) {
+    glPushMatrix();
+    if (mode3) glRotatef(90, 1, 0, 0);
+    // gambar player
+    glPopMatrix();
+}
+
 
 
 int rollDice() {
@@ -6260,10 +6352,12 @@ void drawPagar() {
 }
 
 
-
 float offset_board_Y = 3.0f;
 
 void drawBoard() {
+    // Gambar papan, ular, tangga, player, NRP...
+    drawAlignedBlock();
+    drawSlantedBlock();
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
@@ -7326,20 +7420,115 @@ void input(unsigned char key, int x, int y) {
 
     drawBoard();
 }
+// Display
+void display() {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_LIGHTING);
+    setupLights();
 
+    if (viewMode == 3) {
+        // Mode orang pertama
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        gluPerspective(60, 1.0, 0.1, 100);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        gluLookAt(cameraX, cameraY, cameraZ,
+                  cameraX + cos(cameraYaw), cameraY, cameraZ + sin(cameraYaw),
+                  0, 1, 0);
+        drawBoard();
+        drawNRP(true);
+        drawPlayer(true);
+    } else {
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(-10, 10, -10, 10, -10, 20);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        if (viewMode == 2) {
+            glRotatef(observerAngleX, 1, 0, 0);
+            glRotatef(observerAngleY, 0, 1, 0);
+            glRotatef(observerAngleZ, 0, 0, 1);
+        }
+        drawBoard();
+        drawNRP(false);
+        drawPlayer(false);
+    }
+    glutSwapBuffers();
+}
+// Mouse dan Keyboard Handler
+void mouse(int button, int state, int x, int y) {
+    if (viewMode != 2) return;
+    if (button == GLUT_LEFT_BUTTON) mouseLeft   = (state == GLUT_DOWN);
+    if (button == GLUT_MIDDLE_BUTTON) mouseMiddle = (state == GLUT_DOWN);
+    if (button == GLUT_RIGHT_BUTTON) mouseRight = (state == GLUT_DOWN);
+    if (state == GLUT_UP) {
+        // Simpan sudut terakhir saat mouse dilepas
+        lastAngleX = observerAngleX;
+        lastAngleY = observerAngleY;
+        lastAngleZ = observerAngleZ;
+    }
+}
+void motion(int x, int y) {
+    if (viewMode != 2) return;
+    static int lastX = -1, lastY = -1;
+    if (lastX < 0) { lastX = x; lastY = y; return; }
+    int dx = x - lastX, dy = y - lastY;
+    if (mouseLeft)   observerAngleX = lastAngleX + dy;
+    if (mouseMiddle) observerAngleY = lastAngleY + dx;
+    if (mouseRight)  observerAngleZ = lastAngleZ + dx;
+    glutPostRedisplay();
+}
 
+// Keyboard untuk ganti mode dan lighting
+void keyboard(unsigned char key, int x, int y) {
+    switch (key) {
+        // Ganti mode tampilan
+        case 'v': viewMode = 3; glutPostRedisplay(); break;         // First-person
+        case 'o': viewMode = 1; glutPostRedisplay(); break;         // Ortho
+        case 'a': viewMode = 2; glutPostRedisplay(); break;         // Animasi observer
+        case 'q': exit(0); break;
+        // Lighting
+        case '1': lightAmbientOn = !lightAmbientOn; glutPostRedisplay(); break;
+        case '2': lightDiffuseOn = !lightDiffuseOn; glutPostRedisplay(); break;
+        case '3': lightSpecularOn = !lightSpecularOn; glutPostRedisplay(); break;
+    }
+}
 
+// Navigasi mode 3
+void special(int key, int x, int y) {
+    if (viewMode != 3) return;
+    if (key == GLUT_KEY_UP)    { cameraX += cameraSpeed * cos(cameraYaw); cameraZ += cameraSpeed * sin(cameraYaw); }
+    if (key == GLUT_KEY_DOWN)  { cameraX -= cameraSpeed * cos(cameraYaw); cameraZ -= cameraSpeed * sin(cameraYaw); }
+    if (key == GLUT_KEY_LEFT)  { cameraYaw -= 0.1; }
+    if (key == GLUT_KEY_RIGHT) { cameraYaw += 0.1; }
+    glutPostRedisplay();
+}
 
+// Animasi observer (hanya mode 2)
+void idle() {
+    if (viewMode == 2 && animating) {
+        observerAngleY += 0.2;
+        glutPostRedisplay();
+    }
+}
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     glutInit(&argc, argv);
-    glutInitDisplayMode(GLUT_RGB | GLUT_DEPTH);
-    glutInitWindowSize(700, 700);
-    glutInitWindowPosition(100, 100);
-    glutCreateWindow("Ular Tangga");
-    glutDisplayFunc(drawBoard);
-    glutKeyboardFunc(input);
-    myinit();  // panggil setelah semua init
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
+    glutInitWindowSize(800, 800);
+    glutCreateWindow("Ular Tangga - Demo 4");
+    glEnable(GL_DEPTH_TEST);
+
+    glutDisplayFunc(display);
+    glutMouseFunc(mouse);
+    glutMotionFunc(motion);
+    glutKeyboardFunc(keyboard);
+    glutSpecialFunc(special);
+    glutIdleFunc(idle);
+
+    glEnable(GL_LIGHTING);
+    glEnable(GL_COLOR_MATERIAL);
 
     glutMainLoop();
     return 0;
